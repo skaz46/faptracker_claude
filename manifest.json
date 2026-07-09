@@ -1,5 +1,5 @@
 {
-  "name": "Daily Tracker",
+  "name": "Shiko Meter",
   "short_name": "Tracker",
   "description": "A private, offline streak tracker that keeps you accountable to your journey.",
   "start_url": "./index.html",
@@ -13,7 +13,7 @@
   "categories": ["health", "lifestyle", "productivity"],
   "icons": [
     {
-      "src": "icons/icon-192.png",
+      "src": "shikometer.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
@@ -25,7 +25,7 @@
       "purpose": "maskable"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "shikometer.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
