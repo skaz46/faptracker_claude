@@ -1,6 +1,6 @@
 {
-  "name": "Shiko Meter",
-  "short_name": "Tracker",
+  "name": "OnaniMeter",
+  "short_name": "OnaniMeter",
   "description": "A private, offline streak tracker that keeps you accountable to your journey.",
   "start_url": "./index.html",
   "scope": "./",
@@ -13,14 +13,14 @@
   "categories": ["health", "lifestyle", "productivity"],
   "icons": [
     {
-      "src": "shikometer.png",
+      "src": "86A868A5-1BF4-4952-B913-899A1EEE5B1F.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
 
     {
-      "src": "shikometer.png",
+      "src": "86A868A5-1BF4-4952-B913-899A1EEE5B1F.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
