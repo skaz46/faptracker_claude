@@ -1,7 +1,8 @@
 /* ==========================================================================
    Daily Tracker — App Logic
    Pure vanilla JS. All state lives in localStorage under STORAGE_KEY.
-   Data shape: { startedOn: "YYYY-MM-DD", relapses: ["YYYY-MM-DD", ...] }
+   Data shape (v2): { startedOn: "YYYY-MM-DD", counts: { "YYYY-MM-DD": n } }
+   Legacy shape { startedOn, relapses: [dates] } is migrated automatically.
    ========================================================================== */
 (function () {
   'use strict';
@@ -61,48 +62,51 @@
   // ==========================================================================
   // Persistence
   // ==========================================================================
-  function isValidData(obj) {
-    if (!obj || typeof obj !== 'object') return false;
-    if (typeof obj.startedOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(obj.startedOn)) return false;
-    if (!Array.isArray(obj.relapses)) return false;
-    for (var i = 0; i < obj.relapses.length; i++) {
-      if (typeof obj.relapses[i] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(obj.relapses[i])) return false;
-    }
-    return true;
+  var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  // Accepts v2 ({counts}) or legacy ({relapses:[...]}); returns clean v2 or null.
+  function normalize(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    if (typeof obj.startedOn !== 'string' || !DATE_RE.test(obj.startedOn)) return null;
+    var counts = {};
+    if (Array.isArray(obj.relapses)) {
+      for (var i = 0; i < obj.relapses.length; i++) {
+        var r = obj.relapses[i];
+        if (typeof r !== 'string' || !DATE_RE.test(r)) return null;
+        counts[r] = (counts[r] || 0) + 1;
+      }
+    } else if (obj.counts && typeof obj.counts === 'object') {
+      for (var k in obj.counts) {
+        var n = Number(obj.counts[k]);
+        if (!DATE_RE.test(k) || !isFinite(n) || n < 0) return null;
+        n = Math.floor(n);
+        if (n > 0) counts[k] = n;
+      }
+    } else return null;
+    return { startedOn: obj.startedOn, counts: counts };
   }
+  function isValidData(obj) { return normalize(obj) !== null; }
 
   function loadData() {
     var raw;
     try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { return null; }
     if (!raw) return null;
-    try {
-      var parsed = JSON.parse(raw);
-      if (!isValidData(parsed)) return null;
-      parsed.relapses = uniqSort(parsed.relapses);
-      return parsed;
-    } catch (e) { return null; }
+    try { return normalize(JSON.parse(raw)); } catch (e) { return null; }
   }
 
   function saveData(data) {
-    data.relapses = uniqSort(data.relapses);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ startedOn: data.startedOn, counts: data.counts }));
   }
 
-  function uniqSort(arr) {
-    var set = {};
-    var out = [];
-    for (var i = 0; i < arr.length; i++) { set[arr[i]] = true; }
-    for (var k in set) { out.push(k); }
-    out.sort();
-    return out;
-  }
+  function relapseDays(data) { return Object.keys(data.counts).sort(); }
+  function countOn(data, d) { return data.counts[d] || 0; }
 
   // ==========================================================================
   // Stats computation
   // ==========================================================================
   function computeStats(data) {
     var t = todayStr();
-    var relapses = data.relapses.slice().sort();
+    var relapses = relapseDays(data);
     var prevBoundary = data.startedOn;
     var longest = 0;
 
@@ -119,8 +123,20 @@
 
     var streakSince = relapses.length ? relapses[relapses.length - 1] : data.startedOn;
     var totalDays = daysBetween(data.startedOn, t) + 1;
-    var totalRelapses = relapses.length;
-    var cleanDays = Math.max(0, totalDays - totalRelapses);
+    var totalRelapses = 0, worstDate = null, worstN = 0;
+    relapses.forEach(function (d) {
+      var n = data.counts[d];
+      totalRelapses += n;
+      if (n > worstN) { worstN = n; worstDate = d; }
+    });
+    var relapseDayCount = relapses.length;
+    var cleanDays = Math.max(0, totalDays - relapseDayCount);
+    var weekStart = addDaysStr(t, -6), prevStart = addDaysStr(t, -13), prevEnd = addDaysStr(t, -7);
+    var last7 = 0, prev7 = 0;
+    relapses.forEach(function (d) {
+      if (d >= weekStart && d <= t) last7 += data.counts[d];
+      else if (d >= prevStart && d <= prevEnd) prev7 += data.counts[d];
+    });
     var successRate = totalDays > 0 ? (cleanDays / totalDays) * 100 : 100;
 
     return {
@@ -129,7 +145,11 @@
       longestStreak: longest,
       totalRelapses: totalRelapses,
       successRate: successRate,
-      totalDays: totalDays
+      totalDays: totalDays,
+      relapseDayCount: relapseDayCount,
+      avgPerRelapseDay: relapseDayCount ? totalRelapses / relapseDayCount : 0,
+      worstDate: worstDate, worstN: worstN,
+      last7: last7, prev7: prev7
     };
   }
 
@@ -210,44 +230,47 @@
     $('actionBar').classList.remove('hidden');
   }
 
+  function heatClass(n) { return n >= 3 ? 'heat-3' : (n === 2 ? 'heat-2' : 'heat-1'); }
+
+  // Fills one calendar cell (week box or month cell) based on the day's state.
+  function paintDay(el, emojiSpan, data, dateStr, t) {
+    var n = countOn(data, dateStr);
+    if (dateStr < data.startedOn || dateStr > t) return;
+    if (n > 0) {
+      emojiSpan.textContent = '\u274C';
+      el.classList.add('relapse', heatClass(n));
+      if (n > 1) {
+        var b = document.createElement('span');
+        b.className = 'count-badge';
+        b.textContent = '\u00D7' + n;
+        el.appendChild(b);
+      }
+    } else {
+      emojiSpan.textContent = '\uD83D\uDD25';
+      el.classList.add('clean');
+    }
+  }
+
   function renderWeek(data) {
     var container = $('weekGrid');
     container.innerHTML = '';
     var t = todayStr();
     var monday = getMondayOf(t);
-    var relapseSet = {};
-    data.relapses.forEach(function (r) { relapseSet[r] = true; });
     var letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-
     for (var i = 0; i < 7; i++) {
       var dateStr = addDaysStr(monday, i);
       var box = document.createElement('div');
       box.className = 'day-box';
       box.style.animationDelay = (i * 0.04) + 's';
-
-      var emoji = '';
-      if (dateStr < data.startedOn) {
-        // before the journey started — blank
-      } else if (dateStr > t) {
-        // future day — blank
-      } else if (relapseSet[dateStr]) {
-        emoji = '❌';
-        box.classList.add('relapse');
-      } else {
-        emoji = '🔥';
-        box.classList.add('clean');
-      }
-      if (dateStr === t) box.classList.add('is-today');
-
       var letterSpan = document.createElement('span');
       letterSpan.className = 'day-letter';
       letterSpan.textContent = letters[i];
       var emojiSpan = document.createElement('span');
       emojiSpan.className = 'day-emoji';
-      emojiSpan.textContent = emoji;
-
       box.appendChild(letterSpan);
       box.appendChild(emojiSpan);
+      paintDay(box, emojiSpan, data, dateStr, t);
+      if (dateStr === t) box.classList.add('is-today');
       container.appendChild(box);
     }
   }
@@ -255,57 +278,83 @@
   function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 
   function renderMonth(data) {
-    var label = new Date(currentViewYear, currentViewMonth, 1)
+    $('monthLabel').textContent = new Date(currentViewYear, currentViewMonth, 1)
       .toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    $('monthLabel').textContent = label;
-
     var grid = $('monthGrid');
     grid.innerHTML = '';
-
-    var firstDow = new Date(currentViewYear, currentViewMonth, 1).getDay(); // 0 Sun..6 Sat
+    var firstDow = new Date(currentViewYear, currentViewMonth, 1).getDay();
     var offset = (firstDow === 0) ? 6 : (firstDow - 1);
     var total = daysInMonth(currentViewYear, currentViewMonth);
     var t = todayStr();
-    var relapseSet = {};
-    data.relapses.forEach(function (r) { relapseSet[r] = true; });
-
     for (var i = 0; i < offset; i++) {
       var empty = document.createElement('div');
       empty.className = 'month-cell';
       grid.appendChild(empty);
     }
-
     for (var day = 1; day <= total; day++) {
       var dateStr = currentViewYear + '-' + pad(currentViewMonth + 1) + '-' + pad(day);
       var cell = document.createElement('div');
       cell.className = 'month-cell in-month';
       cell.style.animationDelay = (day * 0.008) + 's';
-
-      var emoji = '';
-      if (dateStr < data.startedOn || dateStr > t) {
-        // before journey started or in the future — blank
-      } else if (relapseSet[dateStr]) {
-        emoji = '❌';
-        cell.classList.add('relapse');
-      } else {
-        emoji = '🔥';
-        cell.classList.add('clean');
-      }
-      if (dateStr === t) cell.classList.add('is-today');
-
       var dateSpan = document.createElement('span');
       dateSpan.className = 'cell-date';
       dateSpan.textContent = String(day);
       var emojiSpan = document.createElement('span');
       emojiSpan.className = 'cell-emoji';
-      emojiSpan.textContent = emoji;
-
       cell.appendChild(dateSpan);
       cell.appendChild(emojiSpan);
+      paintDay(cell, emojiSpan, data, dateStr, t);
+      if (dateStr === t) cell.classList.add('is-today');
+      if (dateStr >= data.startedOn && dateStr <= t) {
+        cell.classList.add('tappable');
+        cell.setAttribute('data-date', dateStr);
+      }
       grid.appendChild(cell);
     }
-
     updateMonthNavButtons(data);
+  }
+
+  // ---- Insights: charts + numbers -----------------------------------------
+  function barChart(vals, labels, w, h) {
+    var max = Math.max.apply(null, vals.concat([1]));
+    var gap = 3, bw = (w - gap * (vals.length - 1)) / vals.length, base = h - 16, s = '';
+    s += '<svg viewBox="0 0 ' + w + ' ' + h + '" class="chart-svg" role="img">';
+    s += '<defs><linearGradient id="barGrad" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="#FF453A"/><stop offset="100%" stop-color="#FF9500"/></linearGradient></defs>';
+    vals.forEach(function (v, i) {
+      var x = i * (bw + gap), bh = v ? Math.max(4, (v / max) * (base - 12)) : 0;
+      if (v) {
+        s += '<rect x="' + x.toFixed(1) + '" y="' + (base - bh).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="3" fill="url(#barGrad)"/>';
+        if (vals.length <= 12) s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (base - bh - 3).toFixed(1) + '" class="chart-val" text-anchor="middle">' + v + '</text>';
+      } else {
+        s += '<rect x="' + x.toFixed(1) + '" y="' + (base - 2) + '" width="' + bw.toFixed(1) + '" height="2" rx="1" fill="rgba(48,209,88,0.55)"/>';
+      }
+      if (labels[i]) s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (h - 3) + '" class="chart-lbl" text-anchor="middle">' + labels[i] + '</text>';
+    });
+    return s + '</svg>';
+  }
+
+  function renderInsights(data, stats) {
+    var t = todayStr();
+    // last 30 days (clamped to journey start)
+    var vals = [], labels = [], i, d;
+    for (i = 29; i >= 0; i--) {
+      d = addDaysStr(t, -i);
+      vals.push(d < data.startedOn ? 0 : countOn(data, d));
+      labels.push(i === 29 || i === 0 || i === 15 ? String(parseDateStr(d).getDate()) : '');
+    }
+    $('trendChart').innerHTML = barChart(vals, labels, 300, 100);
+
+    // weekday pattern (Mon..Sun), all-time
+    var wd = [0, 0, 0, 0, 0, 0, 0];
+    relapseDays(data).forEach(function (r) { wd[(parseDateStr(r).getDay() + 6) % 7] += data.counts[r]; });
+    $('weekdayChart').innerHTML = barChart(wd, ['M', 'T', 'W', 'T', 'F', 'S', 'S'], 300, 90);
+
+    $('insDays').textContent = stats.relapseDayCount + (stats.relapseDayCount === 1 ? ' day' : ' days');
+    $('insAvg').textContent = stats.relapseDayCount ? stats.avgPerRelapseDay.toFixed(1) + ' / day' : '\u2014';
+    $('insWorst').textContent = stats.worstN ? stats.worstN + '\u00D7 \u00B7 ' + formatDisplayDate(stats.worstDate).replace(/, \d{4}$/, '') : '\u2014';
+    var delta = stats.last7 - stats.prev7, el = $('insWeek');
+    el.textContent = stats.last7 + ' vs ' + stats.prev7 + (delta < 0 ? ' \u2193' : (delta > 0 ? ' \u2191' : ' ='));
+    el.className = 'ins-value ' + (delta < 0 ? 'good' : (delta > 0 ? 'bad' : ''));
   }
 
   function updateMonthNavButtons(data) {
@@ -343,13 +392,17 @@
 
     renderWeek(data);
     renderMonth(data);
+    renderInsights(data, stats);
+
+    var tc = countOn(data, todayStr());
+    $('goonedBtn').textContent = 'Gooned \uD83E\uDD40' + (tc ? '  \u00B7  ' + tc + ' today' : '');
   }
 
   // ==========================================================================
   // Actions
   // ==========================================================================
   function startJourney() {
-    var data = { startedOn: todayStr(), relapses: [] };
+    var data = { startedOn: todayStr(), counts: {} };
     saveData(data);
     renderDashboard();
     showToast('Journey started 🔥');
@@ -359,14 +412,11 @@
     var data = loadData();
     if (!data) return;
     var t = todayStr();
-    var set = {};
-    data.relapses.forEach(function (r) { set[r] = true; });
-    set[t] = true;
-    data.relapses = Object.keys(set).sort();
+    data.counts[t] = (data.counts[t] || 0) + 1;
     saveData(data);
     renderDashboard();
     shakeRing();
-    showToast('Logged. Tomorrow is a new day.');
+    showToast(data.counts[t] > 1 ? 'Logged \u00B7 ' + data.counts[t] + ' today. Tomorrow is a new day.' : 'Logged. Tomorrow is a new day.');
   }
 
   function exportData() {
@@ -402,7 +452,7 @@
         'Import this backup?',
         'This will overwrite your current start date and relapse history with the contents of this file.',
         function () {
-          saveData({ startedOn: parsed.startedOn, relapses: parsed.relapses });
+          saveData(normalize(parsed));
           renderDashboard();
           showToast('Data imported');
         }
@@ -423,6 +473,32 @@
     renderDashboard();
     showToast('All data cleared');
   }
+
+  // ==========================================================================
+  // Day editor (tap a calendar day to fix / backfill its count)
+  // ==========================================================================
+  var editingDate = null;
+  function openDayEditor(dateStr) {
+    editingDate = dateStr;
+    refreshDayEditor();
+    $('dayOverlay').classList.remove('hidden');
+  }
+  function refreshDayEditor() {
+    var data = loadData();
+    if (!data || !editingDate) return;
+    $('dayTitle').textContent = formatDisplayDate(editingDate);
+    $('dayCount').textContent = String(countOn(data, editingDate));
+  }
+  function adjustDay(delta) {
+    var data = loadData();
+    if (!data || !editingDate) return;
+    var n = Math.max(0, Math.min(99, countOn(data, editingDate) + delta));
+    if (n) data.counts[editingDate] = n; else delete data.counts[editingDate];
+    saveData(data);
+    refreshDayEditor();
+    renderDashboard();
+  }
+  function closeDayEditor() { $('dayOverlay').classList.add('hidden'); editingDate = null; }
 
   // ==========================================================================
   // Sheet / Modal control
@@ -450,7 +526,7 @@
     $('goonedBtn').addEventListener('click', function () {
       openConfirm(
         'Record a relapse?',
-        'This counts today as a relapse and resets your current streak. Your history is kept either way.',
+        'This adds one relapse to today and resets your current streak. Your history is kept either way.',
         recordRelapse
       );
     });
@@ -494,6 +570,15 @@
     $('confirmOverlay').addEventListener('click', function (e) {
       if (e.target === $('confirmOverlay')) closeConfirm();
     });
+
+    $('monthGrid').addEventListener('click', function (e) {
+      var cell = e.target.closest ? e.target.closest('.month-cell[data-date]') : null;
+      if (cell) openDayEditor(cell.getAttribute('data-date'));
+    });
+    $('dayMinus').addEventListener('click', function () { adjustDay(-1); });
+    $('dayPlus').addEventListener('click', function () { adjustDay(1); });
+    $('dayDoneBtn').addEventListener('click', closeDayEditor);
+    $('dayOverlay').addEventListener('click', function (e) { if (e.target === $('dayOverlay')) closeDayEditor(); });
 
     $('prevMonthBtn').addEventListener('click', function () {
       if ($('prevMonthBtn').disabled) return;
