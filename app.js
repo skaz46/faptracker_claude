@@ -96,6 +96,7 @@
 
   function saveData(data) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ startedOn: data.startedOn, counts: data.counts }));
+    scheduleSync();
   }
 
   function relapseDays(data) { return Object.keys(data.counts).sort(); }
@@ -474,6 +475,115 @@
     showToast('All data cleared');
   }
 
+
+  // ==========================================================================
+  // Cloud sync — pushes data to a PRIVATE GitHub repo file so the iOS widget
+  // can read it. One-way (device -> repo). Config + token stay in localStorage.
+  // ==========================================================================
+  var SYNC_KEY = 'dailyTrackerSync_v1';
+  var SYNC_META = 'dailyTrackerSyncMeta_v1';
+  var syncTimer = null, syncSha = null, syncBusy = false, syncAgain = false;
+
+  function loadSyncCfg() {
+    try {
+      var c = JSON.parse(localStorage.getItem(SYNC_KEY));
+      if (c && c.repo && c.token) { c.path = c.path || 'tracker-data.json'; return c; }
+    } catch (e) {}
+    return null;
+  }
+  function getMeta() { try { return JSON.parse(localStorage.getItem(SYNC_META)) || {}; } catch (e) { return {}; } }
+  function setMeta(m) { try { localStorage.setItem(SYNC_META, JSON.stringify(m)); } catch (e) {} }
+
+  function syncStatusText() {
+    var m = getMeta();
+    if (m.error) return 'Not synced yet: ' + m.error + ' (will retry)';
+    if (m.lastSync) return 'Last synced ' + new Date(m.lastSync).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return 'Not synced yet';
+  }
+  function refreshSyncStatus() { var el = $('syncStatus'); if (el) el.textContent = syncStatusText(); }
+
+  function ghUrl(c) {
+    return 'https://api.github.com/repos/' + c.repo + '/contents/' + c.path.split('/').map(encodeURIComponent).join('/');
+  }
+  function ghHeaders(c) {
+    return { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  }
+
+  function scheduleSync() {
+    if (!loadSyncCfg()) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () { pushSync(false); }, 1200);
+  }
+
+  async function pushSync(force) {
+    var c = loadSyncCfg(), data = loadData();
+    if (!c || !data) return false;
+    if (syncBusy) { syncAgain = true; return false; }
+    var payload = { startedOn: data.startedOn, counts: data.counts };
+    var hash = JSON.stringify(payload);
+    var meta = getMeta();
+    if (!force && !meta.error && meta.lastHash === hash) return true; // nothing new to push
+    syncBusy = true;
+    var ok = false;
+    try {
+      for (var attempt = 0; attempt < 2 && !ok; attempt++) {
+        if (!syncSha) {
+          var g = await fetch(ghUrl(c), { headers: ghHeaders(c), cache: 'no-store' });
+          if (g.ok) syncSha = (await g.json()).sha;
+          else if (g.status !== 404) throw new Error(g.status === 401 || g.status === 403 ? 'token rejected' : g.status === 404 ? 'repo not found' : 'HTTP ' + g.status);
+        }
+        var body = {
+          message: 'sync ' + new Date().toISOString(),
+          content: btoa(JSON.stringify({ startedOn: data.startedOn, counts: data.counts, updatedAt: new Date().toISOString() }, null, 2))
+        };
+        if (syncSha) body.sha = syncSha;
+        var h = ghHeaders(c); h['Content-Type'] = 'application/json';
+        var r = await fetch(ghUrl(c), { method: 'PUT', headers: h, body: JSON.stringify(body) });
+        if (r.status === 409 || r.status === 422) { syncSha = null; continue; }
+        if (r.status === 401 || r.status === 403) throw new Error('token rejected');
+        if (r.status === 404) throw new Error('repo not found / no access');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        syncSha = (await r.json()).content.sha;
+        ok = true;
+      }
+      if (!ok) throw new Error('conflict, try again');
+      setMeta({ lastSync: Date.now(), lastHash: hash });
+    } catch (e) {
+      var m2 = getMeta(); m2.error = (e && e.message === 'Failed to fetch') ? 'offline' : (e && e.message) || 'error';
+      setMeta(m2);
+    }
+    syncBusy = false;
+    refreshSyncStatus();
+    if (syncAgain) { syncAgain = false; scheduleSync(); }
+    return ok;
+  }
+
+  function openSyncModal() {
+    var c = loadSyncCfg();
+    $('syncRepo').value = c ? c.repo : '';
+    $('syncToken').value = c ? c.token : '';
+    $('syncPath').value = c ? c.path : 'tracker-data.json';
+    refreshSyncStatus();
+    $('syncOverlay').classList.remove('hidden');
+  }
+  function closeSyncModal() { $('syncOverlay').classList.add('hidden'); }
+
+  async function saveSyncCfg() {
+    var repo = $('syncRepo').value.trim(), token = $('syncToken').value.trim(), path = $('syncPath').value.trim() || 'tracker-data.json';
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { $('syncStatus').textContent = 'Repo must look like owner/name'; return; }
+    if (!token) { $('syncStatus').textContent = 'Paste your token first'; return; }
+    localStorage.setItem(SYNC_KEY, JSON.stringify({ repo: repo, token: token, path: path.replace(/^\/+/, '') }));
+    setMeta({}); syncSha = null;
+    $('syncStatus').textContent = 'Syncing\u2026';
+    var ok = await pushSync(true);
+    if (ok) showToast('Synced \u2713');
+  }
+  function disconnectSync() {
+    localStorage.removeItem(SYNC_KEY); localStorage.removeItem(SYNC_META); syncSha = null;
+    refreshSyncStatus(); $('syncRepo').value = ''; $('syncToken').value = '';
+    $('syncStatus').textContent = 'Disconnected';
+  }
+
   // ==========================================================================
   // Day editor (tap a calendar day to fix / backfill its count)
   // ==========================================================================
@@ -530,6 +640,13 @@
         recordRelapse
       );
     });
+
+    $('syncBtn').addEventListener('click', function () { closeSheet(); openSyncModal(); });
+    $('syncSaveBtn').addEventListener('click', saveSyncCfg);
+    $('syncDisconnectBtn').addEventListener('click', disconnectSync);
+    $('syncCloseBtn').addEventListener('click', closeSyncModal);
+    $('syncOverlay').addEventListener('click', function (e) { if (e.target === $('syncOverlay')) closeSyncModal(); });
+    window.addEventListener('online', function () { if (getMeta().error) pushSync(true); });
 
     $('menuBtn').addEventListener('click', openSheet);
     $('closeSheetBtn').addEventListener('click', closeSheet);
@@ -614,6 +731,7 @@
     wireEvents();
     renderDashboard();
     registerServiceWorker();
+    if (loadSyncCfg()) pushSync(false);
   }
 
   if (document.readyState === 'loading') {
