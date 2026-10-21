@@ -13,9 +13,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+<link rel="apple-touch-icon" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
+<link rel="icon" type="image/png" sizes="192x192" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
+<link rel="icon" type="image/png" sizes="512x512" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
 
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -125,6 +125,20 @@
     <div id="monthGrid" class="month-grid"></div>
   </section>
 
+  <section class="card insights-card">
+    <div class="section-heading"><h2>Insights</h2></div>
+    <p class="chart-title">Last 30 days</p>
+    <div id="trendChart"></div>
+    <p class="chart-title">By weekday (all time)</p>
+    <div id="weekdayChart"></div>
+    <div class="ins-grid">
+      <div><p class="stat-label">Relapse days</p><p id="insDays" class="ins-value">—</p></div>
+      <div><p class="stat-label">Avg per relapse day</p><p id="insAvg" class="ins-value">—</p></div>
+      <div><p class="stat-label">Worst day</p><p id="insWorst" class="ins-value">—</p></div>
+      <div><p class="stat-label">7d vs prev 7d</p><p id="insWeek" class="ins-value">—</p></div>
+    </div>
+  </section>
+
   <div class="action-spacer" aria-hidden="true"></div>
 </main>
 
@@ -154,6 +168,20 @@
   </div>
 </div>
 <input type="file" id="importFileInput" accept="application/json" class="hidden">
+
+<!-- Day editor -->
+<div id="dayOverlay" class="overlay hidden">
+  <div class="modal">
+    <h2 id="dayTitle" class="modal-title">Day</h2>
+    <p class="modal-body">Relapses logged this day</p>
+    <div class="stepper">
+      <button id="dayMinus" class="stepper-btn" aria-label="Remove one">−</button>
+      <span id="dayCount" class="stepper-count">0</span>
+      <button id="dayPlus" class="stepper-btn" aria-label="Add one">+</button>
+    </div>
+    <div class="modal-actions"><button id="dayDoneBtn" class="btn btn-secondary">Done</button></div>
+  </div>
+</div>
 
 <!-- Generic confirm modal -->
 <div id="confirmOverlay" class="overlay hidden">
