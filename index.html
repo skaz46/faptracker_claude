@@ -152,6 +152,10 @@
   <div id="settingsSheet" class="sheet">
     <div class="sheet-handle"></div>
     <h2 class="sheet-title">Settings</h2>
+    <button id="syncBtn" class="sheet-row">
+      <span>Cloud Sync</span>
+      <span class="sheet-row-sub">Keep the home-screen widget live</span>
+    </button>
     <button id="exportBtn" class="sheet-row">
       <span>Export Data</span>
       <span class="sheet-row-sub">Save a JSON backup</span>
@@ -168,6 +172,23 @@
   </div>
 </div>
 <input type="file" id="importFileInput" accept="application/json" class="hidden">
+
+<!-- Cloud sync -->
+<div id="syncOverlay" class="overlay hidden">
+  <div class="modal">
+    <h2 class="modal-title">Cloud Sync</h2>
+    <p class="modal-body">Pushes your data to a private GitHub repo so the widget can read it.</p>
+    <input id="syncRepo" class="field" placeholder="owner/private-repo" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input id="syncToken" class="field" type="password" placeholder="Fine-grained access token" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input id="syncPath" class="field" placeholder="tracker-data.json" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <p id="syncStatus" class="sync-status"></p>
+    <div class="modal-actions">
+      <button id="syncCloseBtn" class="btn btn-secondary">Close</button>
+      <button id="syncSaveBtn" class="btn btn-primary">Save &amp; Sync</button>
+    </div>
+    <button id="syncDisconnectBtn" class="link-danger">Disconnect</button>
+  </div>
+</div>
 
 <!-- Day editor -->
 <div id="dayOverlay" class="overlay hidden">
