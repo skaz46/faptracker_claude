@@ -1,221 +1,67 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-<title>Daily Tracker</title>
-<meta name="description" content="A private, offline streak tracker.">
+/* Daily Tracker service worker — cache-first app shell for full offline use. */
 
-<!-- PWA / iOS install support -->
-<meta name="theme-color" content="#000000">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Tracker">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
-<link rel="icon" type="image/png" sizes="192x192" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
-<link rel="icon" type="image/png" sizes="512x512" href="86A868A5-1BF4-4952-B913-899A1EEE5B1F.png">
+var CACHE_VERSION = 'daily-tracker-v3';
+var APP_SHELL = [
+  './',
+  './index.html',
+  './styles.css',
+  './app.js',
+  './manifest.json',
+  './86A868A5-1BF4-4952-B913-899A1EEE5B1F.png',
+  './shikometer.png'
+];
 
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
+self.addEventListener('install', function (event) {
+  event.waitUntil(
+    caches.open(CACHE_VERSION).then(function (cache) {
+      return cache.addAll(APP_SHELL);
+    }).then(function () {
+      return self.skipWaiting();
+    })
+  );
+});
 
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
+self.addEventListener('activate', function (event) {
+  event.waitUntil(
+    caches.keys().then(function (keys) {
+      return Promise.all(
+        keys
+          .filter(function (key) { return key !== CACHE_VERSION; })
+          .map(function (key) { return caches.delete(key); })
+      );
+    }).then(function () {
+      return self.clients.claim();
+    })
+  );
+});
 
-<!-- ============ ONBOARDING VIEW ============ -->
-<main id="onboarding" class="view onboarding hidden">
-  <div class="onboarding-glow" aria-hidden="true"></div>
-  <div class="onboarding-content">
-    <div class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 100 100" class="flame-svg">
-        <defs>
-          <linearGradient id="flameGradOnboard" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stop-color="#FF453A"/>
-            <stop offset="55%" stop-color="#FF9500"/>
-            <stop offset="100%" stop-color="#FFD60A"/>
-          </linearGradient>
-        </defs>
-        <path fill="url(#flameGradOnboard)" d="M50 4C44 20 30 28 30 46c0 14 9 23 20 23s20-9 20-23c0-6-2-10-4-13 1 7-2 12-6 12-5 0-6-5-4-10-6 4-9 12-9 19 0 8 6 13 13 13s13-6 13-13c0-19-13-30-23-52z"/>
-      </svg>
-    </div>
-    <p class="eyebrow">DAILY TRACKER</p>
-    <h1 class="onboarding-title">Begin your<br>streak.</h1>
-    <p class="onboarding-sub">One button starts the clock. Everything else — your streak, your history, your progress — is tracked automatically and stays on this device.</p>
-    <button id="startJourneyBtn" class="btn btn-primary btn-large">Start Journey</button>
-  </div>
-</main>
+self.addEventListener('fetch', function (event) {
+  var request = event.request;
 
-<!-- ============ DASHBOARD VIEW ============ -->
-<main id="dashboard" class="view dashboard hidden">
+  // Only handle GET requests for our own origin; let everything else pass through.
+  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) {
+    return;
+  }
 
-  <header class="topbar">
-    <div class="topbar-title">
-      <p class="eyebrow">DAILY TRACKER</p>
-      <h1>Overview</h1>
-    </div>
-    <button id="menuBtn" class="icon-btn" aria-label="Settings">
-      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg>
-    </button>
-  </header>
+  event.respondWith(
+    caches.match(request).then(function (cached) {
+      if (cached) return cached;
 
-  <section class="hero-card card">
-    <div class="ring-wrap">
-      <svg viewBox="0 0 200 200" class="ring-svg">
-        <defs>
-          <linearGradient id="ringGrad" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stop-color="#FF453A"/>
-            <stop offset="50%" stop-color="#FF9500"/>
-            <stop offset="100%" stop-color="#FFD60A"/>
-          </linearGradient>
-        </defs>
-        <circle class="ring-track" cx="100" cy="100" r="86"/>
-        <circle id="ringProgress" class="ring-progress" cx="100" cy="100" r="86"/>
-      </svg>
-      <div class="ring-center">
-        <span id="streakNumber" class="streak-number">0</span>
-        <span class="streak-label">day streak</span>
-      </div>
-    </div>
-    <div class="hero-meta">
-      <p class="hero-meta-label">Current Streak Since</p>
-      <p id="streakSinceDate" class="hero-meta-value">—</p>
-    </div>
-  </section>
-
-  <section class="stats-grid">
-    <div class="card stat-card">
-      <p class="stat-label">Started On</p>
-      <p id="startedOnValue" class="stat-value">—</p>
-    </div>
-    <div class="card stat-card">
-      <p class="stat-label">Longest Streak</p>
-      <p id="longestStreakValue" class="stat-value">—</p>
-    </div>
-    <div class="card stat-card">
-      <p class="stat-label">Total Relapses</p>
-      <p id="totalRelapsesValue" class="stat-value">—</p>
-    </div>
-    <div class="card stat-card">
-      <p class="stat-label">Success Rate</p>
-      <p id="successRateValue" class="stat-value">—</p>
-    </div>
-  </section>
-
-  <section class="card week-card">
-    <div class="section-heading">
-      <h2>This Week</h2>
-    </div>
-    <div id="weekGrid" class="week-grid"></div>
-  </section>
-
-  <section class="card month-card">
-    <div class="section-heading month-nav">
-      <button id="prevMonthBtn" class="icon-btn small" aria-label="Previous month">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <h2 id="monthLabel">Month</h2>
-      <button id="nextMonthBtn" class="icon-btn small" aria-label="Next month">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-    </div>
-    <div class="month-weekday-row">
-      <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
-    </div>
-    <div id="monthGrid" class="month-grid"></div>
-  </section>
-
-  <section class="card insights-card">
-    <div class="section-heading"><h2>Insights</h2></div>
-    <p class="chart-title">Last 30 days</p>
-    <div id="trendChart"></div>
-    <p class="chart-title">By weekday (all time)</p>
-    <div id="weekdayChart"></div>
-    <div class="ins-grid">
-      <div><p class="stat-label">Relapse days</p><p id="insDays" class="ins-value">—</p></div>
-      <div><p class="stat-label">Avg per relapse day</p><p id="insAvg" class="ins-value">—</p></div>
-      <div><p class="stat-label">Worst day</p><p id="insWorst" class="ins-value">—</p></div>
-      <div><p class="stat-label">7d vs prev 7d</p><p id="insWeek" class="ins-value">—</p></div>
-    </div>
-  </section>
-
-  <div class="action-spacer" aria-hidden="true"></div>
-</main>
-
-<!-- Sticky record button -->
-<div id="actionBar" class="action-bar hidden">
-  <button id="goonedBtn" class="btn btn-danger btn-large">Gooned 🥀</button>
-</div>
-
-<!-- Settings bottom sheet -->
-<div id="sheetOverlay" class="overlay hidden">
-  <div id="settingsSheet" class="sheet">
-    <div class="sheet-handle"></div>
-    <h2 class="sheet-title">Settings</h2>
-    <button id="syncBtn" class="sheet-row">
-      <span>Cloud Sync</span>
-      <span class="sheet-row-sub">Keep the home-screen widget live</span>
-    </button>
-    <button id="exportBtn" class="sheet-row">
-      <span>Export Data</span>
-      <span class="sheet-row-sub">Save a JSON backup</span>
-    </button>
-    <button id="importBtn" class="sheet-row">
-      <span>Import Data</span>
-      <span class="sheet-row-sub">Restore from a JSON backup</span>
-    </button>
-    <button id="resetBtn" class="sheet-row danger">
-      <span>Full Reset</span>
-      <span class="sheet-row-sub">Erase everything on this device</span>
-    </button>
-    <button id="closeSheetBtn" class="btn btn-secondary">Close</button>
-  </div>
-</div>
-<input type="file" id="importFileInput" accept="application/json" class="hidden">
-
-<!-- Cloud sync -->
-<div id="syncOverlay" class="overlay hidden">
-  <div class="modal">
-    <h2 class="modal-title">Cloud Sync</h2>
-    <p class="modal-body">Pushes your data to a private GitHub repo so the widget can read it.</p>
-    <input id="syncRepo" class="field" placeholder="owner/private-repo" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <input id="syncToken" class="field" type="password" placeholder="Fine-grained access token" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <input id="syncPath" class="field" placeholder="tracker-data.json" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <p id="syncStatus" class="sync-status"></p>
-    <div class="modal-actions">
-      <button id="syncCloseBtn" class="btn btn-secondary">Close</button>
-      <button id="syncSaveBtn" class="btn btn-primary">Save &amp; Sync</button>
-    </div>
-    <button id="syncDisconnectBtn" class="link-danger">Disconnect</button>
-  </div>
-</div>
-
-<!-- Day editor -->
-<div id="dayOverlay" class="overlay hidden">
-  <div class="modal">
-    <h2 id="dayTitle" class="modal-title">Day</h2>
-    <p class="modal-body">Relapses logged this day</p>
-    <div class="stepper">
-      <button id="dayMinus" class="stepper-btn" aria-label="Remove one">−</button>
-      <span id="dayCount" class="stepper-count">0</span>
-      <button id="dayPlus" class="stepper-btn" aria-label="Add one">+</button>
-    </div>
-    <div class="modal-actions"><button id="dayDoneBtn" class="btn btn-secondary">Done</button></div>
-  </div>
-</div>
-
-<!-- Generic confirm modal -->
-<div id="confirmOverlay" class="overlay hidden">
-  <div class="modal">
-    <h2 id="confirmTitle" class="modal-title">Are you sure?</h2>
-    <p id="confirmBody" class="modal-body">This action cannot be undone.</p>
-    <div class="modal-actions">
-      <button id="confirmCancelBtn" class="btn btn-secondary">Cancel</button>
-      <button id="confirmOkBtn" class="btn btn-danger">Confirm</button>
-    </div>
-  </div>
-</div>
-
-<script src="app.js"></script>
-</body>
-</html>
+      return fetch(request).then(function (response) {
+        if (response && response.status === 200) {
+          var copy = response.clone();
+          caches.open(CACHE_VERSION).then(function (cache) {
+            cache.put(request, copy);
+          });
+        }
+        return response;
+      }).catch(function () {
+        // Offline and not cached: fall back to the app shell for navigations.
+        if (request.mode === 'navigate') {
+          return caches.match('./index.html');
+        }
+        return undefined;
+      });
+    })
+  );
+});
