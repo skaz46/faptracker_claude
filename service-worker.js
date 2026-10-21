@@ -1,16 +1,14 @@
 /* Daily Tracker service worker — cache-first app shell for full offline use. */
 
-var CACHE_VERSION = 'daily-tracker-v1';
+var CACHE_VERSION = 'daily-tracker-v2';
 var APP_SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-192-maskable.png',
-  './icons/icon-512.png',
-  './icons/icon-512-maskable.png'
+  './86A868A5-1BF4-4952-B913-899A1EEE5B1F.png',
+  './shikometer.png'
 ];
 
 self.addEventListener('install', function (event) {
