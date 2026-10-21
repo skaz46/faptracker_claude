@@ -1,6 +1,6 @@
 /* Daily Tracker service worker — cache-first app shell for full offline use. */
 
-var CACHE_VERSION = 'daily-tracker-v2';
+var CACHE_VERSION = 'daily-tracker-v3';
 var APP_SHELL = [
   './',
   './index.html',
